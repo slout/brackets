@@ -22,7 +22,7 @@
 #quick-view-container.active {
     opacity: 1;
     -webkit-transform: scale(1);
-    -webkit-transform-origin: 50% 50%;
+    -webkit-transform-origin: center bottom;
     height: auto; 
 }
 
