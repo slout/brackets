@@ -553,6 +553,8 @@ a, img {
     cursor: default;
     
     &.animating {
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
         -webkit-transition: height 0.15s ease-out;
         transition: height 0.15s ease-out;
     }
