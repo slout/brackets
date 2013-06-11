@@ -73,7 +73,8 @@ define(function (require, exports, module) {
         Strings            = require("strings"),
         TextRange          = require("document/TextRange").TextRange,
         TokenUtils         = require("utils/TokenUtils"),
-        ViewUtils          = require("utils/ViewUtils");
+        ViewUtils          = require("utils/ViewUtils"),
+        Async              = require("utils/Async");
     
     var defaultPrefs = { useTabChar: false, tabSize: 4, spaceUnits: 4, closeBrackets: false,
                          showLineNumbers: true, styleActiveLine: false, wordWrap: true };
@@ -996,31 +997,31 @@ define(function (require, exports, module) {
     Editor.prototype.addInlineWidget = function (pos, inlineWidget, scrollLineIntoView) {
         var self = this;
         
-        this.removeAllInlineWidgetsForLine(pos.line);
-
-        if (scrollLineIntoView === undefined) {
-            scrollLineIntoView = true;
-        }
-
-        if (scrollLineIntoView) {
-            this._codeMirror.scrollIntoView(pos);
-        }
-
-        inlineWidget.info = this._codeMirror.addLineWidget(pos.line, inlineWidget.htmlContent,
-                                                           { coverGutter: true, noHScroll: true });
-        CodeMirror.on(inlineWidget.info.line, "delete", function () {
-            self._removeInlineWidgetInternal(inlineWidget);
+        this.removeAllInlineWidgetsForLine(pos.line).done(function () {
+            if (scrollLineIntoView === undefined) {
+                scrollLineIntoView = true;
+            }
+    
+            if (scrollLineIntoView) {
+                self._codeMirror.scrollIntoView(pos);
+            }
+    
+            inlineWidget.info = self._codeMirror.addLineWidget(pos.line, inlineWidget.htmlContent,
+                                                               { coverGutter: true, noHScroll: true });
+            CodeMirror.on(inlineWidget.info.line, "delete", function () {
+                self._removeInlineWidgetInternal(inlineWidget);
+            });
+            self._inlineWidgets.push(inlineWidget);
+    
+            // Callback to widget once parented to the editor
+            inlineWidget.onAdded();
+    
+            var removeAnimation = function () {
+                inlineWidget.$htmlContent.removeClass("animating");
+                inlineWidget.$htmlContent.off("webkitTransitionEnd", removeAnimation);
+            };
+            inlineWidget.$htmlContent.on("webkitTransitionEnd", removeAnimation);
         });
-        this._inlineWidgets.push(inlineWidget);
-
-        // Callback to widget once parented to the editor
-        inlineWidget.onAdded();
-
-        var removeAnimation = function () {
-            inlineWidget.$htmlContent.removeClass("animating");
-            inlineWidget.$htmlContent.off("webkitTransitionEnd", removeAnimation);
-        };
-        inlineWidget.$htmlContent.on("webkitTransitionEnd", removeAnimation);
     };
     
     /**
@@ -1030,9 +1031,10 @@ define(function (require, exports, module) {
         // copy the array because _removeInlineWidgetInternal will modify the original
         var widgets = [].concat(this.getInlineWidgets());
         
-        widgets.forEach(function (widget) {
-            this.removeInlineWidget(widget);
-        }, this);
+        return Async.doInParallel(
+            widgets,
+            this.removeInlineWidget.bind(this)
+        );
     };
     
     /**
@@ -1040,15 +1042,25 @@ define(function (require, exports, module) {
      * @param {number} inlineWidget The widget to remove.
      */
     Editor.prototype.removeInlineWidget = function (inlineWidget) {
-        var lineNum = this._getInlineWidgetLineNumber(inlineWidget),
-            self = this;
-        
-        inlineWidget.$htmlContent.addClass("animating")
-            .on("webkitTransitionEnd", function () {
-                self._codeMirror.removeLineWidget(inlineWidget.info);
-                self._removeInlineWidgetInternal(inlineWidget);
-            })
-            .height(0);
+        if (!inlineWidget.isClosing) {
+            inlineWidget.isClosing = true;
+            
+            var lineNum = this._getInlineWidgetLineNumber(inlineWidget),
+                deferred = new $.Deferred(),
+                self = this;
+            
+            inlineWidget.$htmlContent.addClass("animating")
+                .on("webkitTransitionEnd", function () {
+                    self._codeMirror.removeLineWidget(inlineWidget.info);
+                    self._removeInlineWidgetInternal(inlineWidget);
+                    deferred.resolve();
+                })
+                .height(0);
+                
+            return deferred.promise();
+        } else {
+            return new $.Deferred().resolve().promise();
+        }
     };
     
     /**
@@ -1067,12 +1079,20 @@ define(function (require, exports, module) {
                     return w.info;
                 });
 
-            widgetInfos.forEach(function (info) {
-                // Lookup the InlineWidget object using the same index
-                inlineWidget = self._inlineWidgets[allWidgetInfos.indexOf(info)];
-                self.removeInlineWidget(inlineWidget);
-            });
-
+            return Async.doInParallel(
+                widgetInfos,
+                function (info) {
+                    // Lookup the InlineWidget object using the same index
+                    inlineWidget = self._inlineWidgets[allWidgetInfos.indexOf(info)];
+                    if (inlineWidget) {
+                        return self.removeInlineWidget(inlineWidget);
+                    } else {
+                        return new $.Deferred().resolve().promise();
+                    }
+                }
+            );
+        } else {
+            return new $.Deferred().resolve().promise();
         }
     };
     
