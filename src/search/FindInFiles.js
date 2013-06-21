@@ -54,6 +54,7 @@ define(function (require, exports, module) {
         PanelManager          = require("view/PanelManager"),
         FileIndexManager      = require("project/FileIndexManager"),
         FileUtils             = require("file/FileUtils"),
+        NativeFileSystem      = require("file/NativeFileSystem").NativeFileSystem,
         KeyEvent              = require("utils/KeyEvent"),
         AppInit               = require("utils/AppInit"),
         StatusBar             = require("widgets/StatusBar"),
@@ -480,6 +481,12 @@ define(function (require, exports, module) {
     /** Search within the file/subtree defined by the sidebar selection */
     function doFindInSubtree() {
         var selectedEntry = ProjectManager.getSelectedItem();
+        
+        if (selectedEntry instanceof NativeFileSystem.InaccessibleFileEntry) {
+            // silently fail on untitled documents
+            return;
+        }
+        
         doFindInFiles(selectedEntry);
     }
     
